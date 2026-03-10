@@ -1,0 +1,89 @@
+{
+  "n_topics": 10,
+  "asignaturas": [
+    {
+      "nombre": "Lengua",
+      "nivel_dificultad": 3,
+      "dificultad_interna": 0.5,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Matematicas",
+      "nivel_dificultad": 5,
+      "dificultad_interna": 0.9,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Historia",
+      "nivel_dificultad": 1,
+      "dificultad_interna": 0.1,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Filosofia",
+      "nivel_dificultad": 2,
+      "dificultad_interna": 0.3,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Ingles",
+      "nivel_dificultad": 4,
+      "dificultad_interna": 0.7,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Programacion",
+      "nivel_dificultad": 3,
+      "dificultad_interna": 0.5,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Modelos de IA",
+      "nivel_dificultad": 4,
+      "dificultad_interna": 0.7,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Sistemas de BigData",
+      "nivel_dificultad": 2,
+      "dificultad_interna": 0.3,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Machine Learnin",
+      "nivel_dificultad": 5,
+      "dificultad_interna": 0.9,
+      "minutos_diarios_max": 180
+    },
+    {
+      "nombre": "Latin",
+      "nivel_dificultad": 1,
+      "dificultad_interna": 0.1,
+      "minutos_diarios_max": 180
+    }
+  ],
+  "nombres": [
+    "Lengua",
+    "Matematicas",
+    "Historia",
+    "Filosofia",
+    "Ingles",
+    "Programacion",
+    "Modelos de IA",
+    "Sistemas de BigData",
+    "Machine Learnin",
+    "Latin"
+  ],
+  "dificultades": [
+    0.5,
+    0.9,
+    0.1,
+    0.3,
+    0.7,
+    0.5,
+    0.7,
+    0.3,
+    0.9,
+    0.1
+  ]
+}
