@@ -28,7 +28,7 @@ class StudyEnv(gym.Env):
     # metadata es obligatorio en Gymnasium — indica los modos de visualización
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, n_topics=5, max_daily_minutes=180):
+    def __init__(self, n_topics=5, max_daily_minutes=180, difficulties=None):
         """
         Constructor del entorno.
 
@@ -37,6 +37,8 @@ class StudyEnv(gym.Env):
                             Empezamos con 5 para que sea fácil de depurar.
             max_daily_minutes (int): Máximo de minutos de estudio por día.
                                      Si se supera, el agente recibe penalización.
+            difficulties (list): Dificultades definidas por el alumno (0.0 a 1.0).
+                                  Si es None, se asigna 0.5 a todos los temas.
         """
         super().__init__()  # Llamada obligatoria al constructor padre de gym.Env
 
@@ -72,6 +74,16 @@ class StudyEnv(gym.Env):
         # MultiDiscrete permite múltiples acciones discretas en una sola
         self.action_space = spaces.MultiDiscrete([n_topics, 3])
 
+        # ── DIFICULTADES FIJAS ──────────────────────────────────────────────
+        # Guardamos las dificultades ANTES de llamar a _init_state()
+        # porque _init_state() también se llama en cada reset() y necesitamos
+        # que las dificultades del alumno persistan entre episodios.
+        # Sin esto, cada reset() sobreescribiría las dificultades con 0.5.
+        if difficulties is not None:
+            self._difficulties_fixed = np.array(difficulties, dtype=np.float32)
+        else:
+            self._difficulties_fixed = None
+
         # Inicializar el estado interno del entorno
         self._init_state()
 
@@ -86,10 +98,15 @@ class StudyEnv(gym.Env):
         procesada que se le entrega en _get_obs().
         """
 
-        # Dificultad de cada tema: número aleatorio entre 0.2 y 0.9
-        # 0.2 = tema fácil, 0.9 = tema muy difícil
-        # En un sistema real esto se estimaría con IRT (Item Response Theory)
-        self.difficulty = np.random.uniform(0.2, 0.9, self.n_topics).astype(np.float32)
+        # Dificultad de cada tema:
+        # Si el alumno definió las dificultades manualmente → usarlas.
+        # Si no → asignar 0.5 (dificultad media) a todos los temas.
+        # hasattr() comprueba que _difficulties_fixed ya existe (por si
+        # _init_state() se llama antes de que se defina el atributo).
+        if hasattr(self, '_difficulties_fixed') and self._difficulties_fixed is not None:
+            self.difficulty = self._difficulties_fixed.copy()
+        else:
+            self.difficulty = np.full(self.n_topics, 0.5, dtype=np.float32)
 
         # Estabilidad de memoria por tema (en días)
         # Parámetro S de la curva de Ebbinghaus: R(t) = e^(-t/S)
@@ -186,7 +203,7 @@ class StudyEnv(gym.Env):
         retention_before = self._get_retention()
 
         # ── 3. Actualizar la estabilidad del tema repasado ──────────────────
-        # Cuando repassas un tema, su memoria se vuelve más estable (S aumenta)
+        # Cuando repasas un tema, su memoria se vuelve más estable (S aumenta)
         #
         # La ganancia de estabilidad depende de:
         #   - cuánto tiempo dedicas: log1p(duration/30) → rendimientos decrecientes
@@ -230,7 +247,7 @@ class StudyEnv(gym.Env):
 
         # ── 7. Condiciones de fin de episodio ───────────────────────────────
         terminated = self.day >= 7                              # 7 días completados = fin normal
-        truncated = self.time_used > self.max_daily_minutes * 7 * 2 # Abuso extremo de tiempo
+        truncated  = self.time_used > self.max_daily_minutes * 7 * 2  # Abuso extremo de tiempo
 
         # ── 8. Info de depuración ───────────────────────────────────────────
         info = {
