@@ -1,11 +1,6 @@
 // ============================================================
-// App.jsx
-// Componente principal — dashboard directo sin onboarding
-//
-// ¿Qué hace este archivo?
-// Lee el usuario_id desde /usuario_id.json generado por
-// configurar_asignaturas.py. Si no existe, muestra error
-// indicando que hay que ejecutar el script primero.
+// App.jsx — RL Study Optimizer
+// DISEÑO ACTUALIZADO — lógica 100% sin cambios
 // ============================================================
 
 import { useState, useEffect, useCallback } from "react"
@@ -28,37 +23,25 @@ export default function App() {
   const [error,         setError]         = useState(null)
   const [avanzando,     setAvanzando]     = useState(false)
 
-  // ── Al montar: leer usuario_id generado por configurar_asignaturas.py ────
+  // ── Al montar: leer usuario_id ────────────────────────────────────────────
   useEffect(() => {
     const inicializar = async () => {
       try {
-        // Primero intentar leer desde localStorage (sesiones anteriores)
         const idGuardado = localStorage.getItem("usuario_id")
-
         if (idGuardado) {
-          // Verificar que el usuario sigue existiendo en la BD
           try {
             await axios.get(`${API}/api/usuarios/${idGuardado}`)
             setUsuarioId(parseInt(idGuardado))
             return
           } catch {
-            // El usuario ya no existe en la BD — borrar localStorage
-            // y leer desde el archivo JSON
             localStorage.removeItem("usuario_id")
           }
         }
-
-        // Leer el usuario_id generado por configurar_asignaturas.py
-        // El archivo está en frontend/public/usuario_id.json
         const res = await axios.get("/usuario_id.json")
         const id  = res.data.usuario_id
-
-        // Guardarlo en localStorage para las próximas visitas
         localStorage.setItem("usuario_id", id)
         setUsuarioId(id)
-
       } catch (e) {
-        // El archivo usuario_id.json no existe todavía
         setError(
           "No se encontró ningún usuario configurado. " +
           "Ejecuta primero: python configurar_asignaturas.py"
@@ -105,76 +88,142 @@ export default function App() {
     }
   }
 
-  // ── Dashboard ─────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-300">
 
       <Header retencionMedia={estadisticas?.retencion_media ?? 0} />
 
-      <main className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
-        {/* Error — incluye instrucción clara si falta configuración */}
+        {/* ── Estado de error ── */}
         {error && (
-          <div className="bg-red-50 border border-red-300 rounded-2xl p-6 text-red-700">
-            <p className="font-bold text-lg mb-2">⚠️ {error}</p>
-            <p className="text-sm text-red-500">
+          <div className="rounded-2xl border border-red-200 dark:border-red-900
+                          bg-red-50 dark:bg-red-950/40 p-6">
+            <p className="text-sm font-semibold text-red-600 dark:text-red-400 mb-1">
+              Error de configuración
+            </p>
+            <p className="text-base font-bold text-red-700 dark:text-red-300 mb-3">
+              {error}
+            </p>
+            <code className="text-xs bg-red-100 dark:bg-red-900/50 text-red-600
+                             dark:text-red-400 px-3 py-1.5 rounded-lg font-mono">
+              python configurar_asignaturas.py
+            </code>
+            <p className="text-xs text-red-400 dark:text-red-500 mt-3">
               Una vez ejecutado el script, recarga esta página.
             </p>
           </div>
         )}
 
+        {/* ── Estado de carga ── */}
         {cargando && !error && (
-          <div className="text-center py-12 text-gray-400">
-            <p className="text-4xl mb-3">🤖</p>
-            <p>El agente está pensando…</p>
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-900/40
+                            flex items-center justify-center">
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent
+                              rounded-full animate-spin" />
+            </div>
+            <p className="text-sm text-slate-400 dark:text-slate-500">
+              El agente está calculando la recomendación…
+            </p>
           </div>
         )}
 
+        {/* ── Dashboard principal ── */}
         {!cargando && !error && (
           <>
-            <RecomendacionCard
-              recomendacion={recomendacion}
-              onIniciarSesion={() => setMostrarModal(true)}
-            />
+            {/* Fila superior: Recomendación + Stats */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
+              {/* Recomendación ocupa 2 columnas en desktop */}
+              <div className="lg:col-span-2">
+                <RecomendacionCard
+                  recomendacion={recomendacion}
+                  onIniciarSesion={() => setMostrarModal(true)}
+                />
+              </div>
+
+              {/* Stats verticales en desktop, grid 2x2 en mobile */}
+              <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
+                {[
+                  {
+                    label: "Retención media",
+                    valor: `${estadisticas?.retencion_media ?? 0}%`,
+                    accent: "text-indigo-600 dark:text-indigo-400"
+                  },
+                  {
+                    label: "Sesiones totales",
+                    valor: estadisticas?.total_sesiones ?? 0,
+                    accent: "text-violet-600 dark:text-violet-400"
+                  },
+                  {
+                    label: "Minutos estudiados",
+                    valor: estadisticas?.minutos_totales ?? 0,
+                    accent: "text-slate-800 dark:text-slate-200"
+                  },
+                  {
+                    label: "Más urgente",
+                    valor: estadisticas?.asignatura_mas_urgente ?? "—",
+                    accent: "text-red-500 dark:text-red-400"
+                  }
+                ].map(({ label, valor, accent }) => (
+                  <div
+                    key={label}
+                    className="bg-white dark:bg-slate-800 rounded-2xl border
+                               border-slate-100 dark:border-slate-700/60
+                               shadow-sm p-4 flex flex-col gap-1"
+                  >
+                    <p className="text-[10px] font-semibold uppercase tracking-widest
+                                  text-slate-400 dark:text-slate-500">
+                      {label}
+                    </p>
+                    <p className={`text-xl font-bold leading-tight truncate ${accent}`}>
+                      {valor}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Fila inferior: Chart + Lista */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <RetentionChart asignaturas={estadisticas?.asignaturas} />
               <AsignaturasList asignaturas={estadisticas?.asignaturas} />
             </div>
 
-            <div className="flex justify-end">
+            {/* Acción: Simular día */}
+            <div className="flex justify-end pt-2">
               <button
                 onClick={avanzarDia}
                 disabled={avanzando}
-                className="bg-gray-700 hover:bg-gray-600 text-white text-sm
-                           font-semibold px-4 py-2 rounded-xl transition-colors
-                           disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl
+                           bg-slate-800 dark:bg-slate-700 hover:bg-slate-700
+                           dark:hover:bg-slate-600 text-white text-sm font-semibold
+                           transition-all duration-150 disabled:opacity-40
+                           disabled:cursor-not-allowed shadow-sm hover:shadow-md
+                           active:scale-95"
               >
-                {avanzando ? "Avanzando…" : "⏭️ Simular día siguiente"}
+                {avanzando ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/40
+                                    border-t-white rounded-full animate-spin" />
+                    Avanzando…
+                  </>
+                ) : (
+                  <>
+                    <span className="text-base">⏭</span>
+                    Simular día siguiente
+                  </>
+                )}
               </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              {[
-                { label: "Sesiones totales",   valor: estadisticas?.total_sesiones        ?? 0,   unidad: "" },
-                { label: "Minutos estudiados",  valor: estadisticas?.minutos_totales       ?? 0,   unidad: "min" },
-                { label: "Más urgente",         valor: estadisticas?.asignatura_mas_urgente ?? "—", unidad: "" }
-              ].map(({ label, valor, unidad }) => (
-                <div key={label} className="bg-white rounded-2xl shadow p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-                    {label}
-                  </p>
-                  <p className="text-2xl font-bold text-blue-800">
-                    {valor}{unidad && <span className="text-sm ml-1">{unidad}</span>}
-                  </p>
-                </div>
-              ))}
             </div>
           </>
         )}
 
       </main>
 
+      {/* ── Modal de sesión ── */}
       {mostrarModal && recomendacion && (
         <SessionModal
           recomendacion={recomendacion}
