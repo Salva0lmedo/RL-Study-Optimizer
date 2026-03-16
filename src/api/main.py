@@ -30,8 +30,6 @@ from stable_baselines3.common.monitor import Monitor
 from configurar_asignaturas import cargar_configuracion
 
 # ── Crear tablas en la base de datos ─────────────────────────────────────────
-# Esto crea el archivo study_optimizer.db con todas las tablas
-# si no existe todavía. Si ya existe, no hace nada.
 models.Base.metadata.create_all(bind=engine)
 
 # ── Inicializar FastAPI ───────────────────────────────────────────────────────
@@ -41,17 +39,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# ── CORS: permite que el frontend React se comunique con la API ───────────────
-# Sin esto, el navegador bloquearía las peticiones del frontend
+# ── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # En producción limitaríamos a la URL del frontend
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"]
 )
 
-# ── Cargar el agente PPO al arrancar la API ───────────────────────────────────
-# Lo cargamos una sola vez al iniciar para que sea rápido en cada request
+# ── Cargar el agente PPO ──────────────────────────────────────────────────────
 print("Cargando agente PPO...")
 config = cargar_configuracion()
 
@@ -70,11 +66,64 @@ agente = PPO.load("models/best/best_model", env=_vec_env)
 print("✅ Agente PPO cargado correctamente")
 
 
+# ── Función de selección de asignatura ───────────────────────────────────────
+def seleccionar_asignatura(asignaturas, estado):
+    """
+    Selecciona qué asignatura estudiar combinando el agente PPO
+    con una puntuación de urgencia real.
+
+    Funcionamiento:
+      1. El agente PPO sugiere una asignatura basándose en el estado.
+      2. Se calcula una puntuación para TODAS las asignaturas:
+             score = urgencia × dificultad × factor_tiempo
+         donde factor_tiempo penaliza las asignaturas que llevan
+         muchos días sin repasar.
+      3. Se elige la asignatura con mayor score final.
+
+    Así el agente influye en la decisión pero no puede ignorar
+    indefinidamente una asignatura muy olvidada.
+    """
+    n = len(asignaturas)
+
+    # ── Paso 1: sugerencia del agente PPO ────────────────────────────────
+    obs = _vec_env.normalize_obs(estado.reshape(1, -1))
+    accion, _ = agente.predict(obs, deterministic=True)
+    topic_ppo    = int(accion[0][0])
+    duration_idx = int(accion[0][1])
+    topic_ppo    = min(topic_ppo, n - 1)
+
+    # ── Paso 2: calcular scores para todas las asignaturas ───────────────
+    scores = []
+    for i, a in enumerate(asignaturas):
+        retencion = float(np.exp(
+            -a.dias_desde_repaso / max(a.estabilidad, 0.1)
+        ))
+        urgencia = 1.0 - retencion
+
+        # Factor tiempo: penaliza exponencialmente los días sin repasar
+        # Una asignatura con 10 días sin repasar tiene factor 2.7x
+        # Una con 1 día tiene factor 1.1x
+        factor_tiempo = float(np.exp(a.dias_desde_repaso / 10.0))
+
+        # Score base = urgencia × dificultad × factor_tiempo
+        score_base = urgencia * a.dificultad * factor_tiempo
+
+        # Bonus si el agente PPO también eligió esta asignatura
+        # Así el agente influye pero no monopoliza la decisión
+        bonus_ppo = 0.3 if i == topic_ppo else 0.0
+
+        scores.append(score_base + bonus_ppo)
+
+    # ── Paso 3: elegir la asignatura con mayor score ──────────────────────
+    topic_idx = int(np.argmax(scores))
+
+    return topic_idx, duration_idx
+
+
 # ════════════════════════════════════════════════════════════════
 # ENDPOINTS
 # ════════════════════════════════════════════════════════════════
 
-# ── Health check ─────────────────────────────────────────────────────────────
 @app.get("/")
 def raiz():
     """Comprueba que la API está funcionando."""
@@ -84,12 +133,7 @@ def raiz():
 # ── Usuarios ──────────────────────────────────────────────────────────────────
 @app.post("/api/usuarios", response_model=schemas.UsuarioRespuesta)
 def crear_usuario(datos: schemas.UsuarioCrear, db: Session = Depends(get_db)):
-    """
-    Crea un nuevo usuario.
-    Ejemplo de uso desde el navegador (Swagger UI):
-        POST /api/usuarios
-        Body: {"nombre": "Salvador"}
-    """
+    """Crea un nuevo usuario."""
     return crud.crear_usuario(db, datos)
 
 
@@ -117,7 +161,7 @@ def crear_asignatura(usuario_id: int, datos: schemas.AsignaturaCrear,
 @app.get("/api/usuarios/{usuario_id}/asignaturas",
          response_model=list[schemas.AsignaturaRespuesta])
 def listar_asignaturas(usuario_id: int, db: Session = Depends(get_db)):
-    """Lista todas las asignaturas de un usuario con su estado actual."""
+    """Lista todas las asignaturas de un usuario."""
     return crud.obtener_asignaturas(db, usuario_id)
 
 
@@ -126,8 +170,9 @@ def listar_asignaturas(usuario_id: int, db: Session = Depends(get_db)):
          response_model=schemas.RecomendacionRespuesta)
 def recomendar(usuario_id: int, db: Session = Depends(get_db)):
     """
-    Pregunta al agente PPO qué asignatura estudiar hoy y cuánto tiempo.
-    Este es el endpoint más importante de la API.
+    Recomienda qué asignatura estudiar hoy combinando el agente PPO
+    con una puntuación de urgencia real por asignatura.
+    Garantiza que ninguna asignatura queda abandonada indefinidamente.
     """
     usuario = crud.obtener_usuario(db, usuario_id)
     if not usuario:
@@ -136,25 +181,16 @@ def recomendar(usuario_id: int, db: Session = Depends(get_db)):
     asignaturas = crud.obtener_asignaturas(db, usuario_id)
     if not asignaturas:
         raise HTTPException(status_code=400,
-                            detail="El usuario no tiene asignaturas. "
-                                   "Añade asignaturas primero.")
+                            detail="El usuario no tiene asignaturas.")
 
-    # Construir el vector de estado actual del estudiante
+    # Construir vector de estado y seleccionar asignatura
     estado = crud.construir_vector_estado(db, usuario_id)
+    topic_idx, duration_idx = seleccionar_asignatura(asignaturas, estado)
 
-    # Pedir recomendación al agente
-    obs = _vec_env.normalize_obs(estado.reshape(1, -1))
-    accion, _ = agente.predict(obs, deterministic=True)
-
-    topic_idx    = int(accion[0][0])
-    duration_idx = int(accion[0][1])
-    duraciones   = [30, 60, 90]
-
-    # Asegurarse de que el índice no supera el número de asignaturas reales
-    topic_idx = min(topic_idx, len(asignaturas) - 1)
+    duraciones = [30, 60, 90]
     asignatura = asignaturas[topic_idx]
 
-    # Calcular retención y urgencia actuales
+    # Calcular retención y urgencia de la asignatura seleccionada
     retencion = float(np.exp(
         -asignatura.dias_desde_repaso / max(asignatura.estabilidad, 0.1)
     ))
@@ -174,7 +210,7 @@ def recomendar(usuario_id: int, db: Session = Depends(get_db)):
 def registrar_sesion(datos: schemas.SesionCrear, db: Session = Depends(get_db)):
     """
     Registra una sesión de estudio completada.
-    El alumno indica cuánto estudió y se pone una nota del 0 al 10.
+    El alumno se pone una nota del 0 al 10.
     Esto actualiza la estabilidad de Ebbinghaus de la asignatura.
     """
     return crud.crear_sesion(db, datos)
@@ -205,7 +241,6 @@ def avanzar_dia(usuario_id: int, db: Session = Depends(get_db)):
     """
     Simula el paso de un día: incrementa el contador de días
     de todas las asignaturas del usuario.
-    En producción esto se llamaría automáticamente cada 24 horas.
     """
     usuario = crud.obtener_usuario(db, usuario_id)
     if not usuario:
