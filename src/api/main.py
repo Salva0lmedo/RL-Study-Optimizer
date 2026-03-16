@@ -106,7 +106,7 @@ def seleccionar_asignatura(asignaturas, estado):
         factor_tiempo = float(np.exp(a.dias_desde_repaso / 10.0))
 
         # Score base = urgencia × dificultad × factor_tiempo
-        score_base = urgencia * a.dificultad * factor_tiempo
+        score_base = urgencia * factor_tiempo
 
         # Bonus si el agente PPO también eligió esta asignatura
         # Así el agente influye pero no monopoliza la decisión
