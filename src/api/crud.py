@@ -203,3 +203,183 @@ def obtener_estadisticas(db: Session, usuario_id: int) -> dict:
         "minutos_totales":        int(total_minutos),
         "asignaturas":            asignaturas
     }
+
+# ── Dominio ───────────────────────────────────────────────────────────────────
+
+def crear_dominio(db: Session, usuario_id: int,
+                  datos: schemas.DominioCrear) -> models.Dominio:
+    """Crea un nuevo dominio para el usuario."""
+    dominio = models.Dominio(
+        usuario_id=usuario_id,
+        tipo=datos.tipo,
+        nombre=datos.nombre,
+        descripcion=datos.descripcion
+    )
+    db.add(dominio)
+    db.commit()
+    db.refresh(dominio)
+    return dominio
+
+
+def obtener_dominios(db: Session, usuario_id: int) -> list[models.Dominio]:
+    """Devuelve todos los dominios de un usuario."""
+    return db.query(models.Dominio).filter(
+        models.Dominio.usuario_id == usuario_id
+    ).all()
+
+
+def obtener_dominio(db: Session, dominio_id: int) -> models.Dominio:
+    """Obtiene un dominio por su ID."""
+    return db.query(models.Dominio).filter(
+        models.Dominio.id == dominio_id
+    ).first()
+
+
+def eliminar_dominio(db: Session, dominio_id: int):
+    """Elimina un dominio y todos sus ítems."""
+    dominio = db.query(models.Dominio).filter(
+        models.Dominio.id == dominio_id
+    ).first()
+    if dominio:
+        db.delete(dominio)
+        db.commit()
+
+
+# ── Item ──────────────────────────────────────────────────────────────────────
+
+def crear_item(db: Session, dominio_id: int,
+               datos: schemas.ItemCrear) -> models.Item:
+    """Crea un nuevo ítem dentro de un dominio."""
+    item = models.Item(
+        dominio_id=dominio_id,
+        pregunta=datos.pregunta,
+        respuesta=datos.respuesta,
+        subdominio=datos.subdominio,
+        dificultad=datos.dificultad
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def obtener_items(db: Session, dominio_id: int) -> list[models.Item]:
+    """Devuelve todos los ítems de un dominio."""
+    return db.query(models.Item).filter(
+        models.Item.dominio_id == dominio_id
+    ).all()
+
+
+def crear_items_bulk(db: Session, dominio_id: int,
+                     items: list[schemas.ItemCrear]) -> list[models.Item]:
+    """
+    Crea múltiples ítems de golpe.
+    Útil para importar un listado completo de vocabulario,
+    temario de oposiciones, etc.
+    """
+    nuevos = [
+        models.Item(
+            dominio_id=dominio_id,
+            pregunta=item.pregunta,
+            respuesta=item.respuesta,
+            subdominio=item.subdominio,
+            dificultad=item.dificultad
+        )
+        for item in items
+    ]
+    db.add_all(nuevos)
+    db.commit()
+    return nuevos
+
+
+def recomendar_item(db: Session, dominio_id: int) -> models.Item:
+    """
+    Selecciona el ítem más urgente para practicar usando
+    la misma lógica de score que el agente PPO:
+        score = urgencia × dificultad × factor_tiempo
+    """
+    items = obtener_items(db, dominio_id)
+    if not items:
+        return None
+
+    scores = []
+    for item in items:
+        retencion = float(np.exp(
+            -item.dias_desde_repaso / max(item.estabilidad, 0.1)
+        ))
+        urgencia      = 1.0 - retencion
+        factor_tiempo = float(np.exp(item.dias_desde_repaso / 10.0))
+        scores.append(urgencia * factor_tiempo)
+
+    return items[int(np.argmax(scores))]
+
+
+def practicar_item(db: Session, item_id: int,
+                   usuario_id: int, score: float) -> models.SesionItem:
+    """
+    Registra la práctica de un ítem y actualiza su estabilidad.
+    """
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if not item:
+        return None
+
+    retencion_antes = float(np.exp(
+        -item.dias_desde_repaso / max(item.estabilidad, 0.1)
+    ))
+
+    # Actualizar estabilidad según el score
+    score_norm = score / 10.0
+    ganancia = score_norm * (1.0 - item.dificultad)
+    item.estabilidad       += ganancia
+    item.dias_desde_repaso  = 0.0
+    item.veces_practicado  += 1
+
+    # Registrar la sesión
+    sesion = models.SesionItem(
+        item_id=item_id,
+        usuario_id=usuario_id,
+        score=score,
+        retencion_antes=retencion_antes,
+        retencion_despues=1.0
+    )
+    db.add(sesion)
+    db.commit()
+    db.refresh(sesion)
+    return sesion
+
+
+def avanzar_dias_dominio(db: Session, dominio_id: int):
+    """Incrementa en 1 el contador de días de todos los ítems del dominio."""
+    db.query(models.Item).filter(
+        models.Item.dominio_id == dominio_id
+    ).update({"dias_desde_repaso": models.Item.dias_desde_repaso + 1.0})
+    db.commit()
+
+
+def obtener_estadisticas_dominio(db: Session,
+                                  dominio_id: int) -> dict:
+    """Calcula las estadísticas del dominio."""
+    dominio = obtener_dominio(db, dominio_id)
+    items   = obtener_items(db, dominio_id)
+
+    if not items:
+        return None
+
+    retenciones = [
+        float(np.exp(-i.dias_desde_repaso / max(i.estabilidad, 0.1)))
+        for i in items
+    ]
+
+    idx_urgente       = int(np.argmin(retenciones))
+    items_criticos    = sum(1 for r in retenciones if r < 0.4)
+
+    return {
+        "dominio_id":            dominio_id,
+        "nombre":                dominio.nombre,
+        "tipo":                  dominio.tipo,
+        "total_items":           len(items),
+        "retencion_media":       float(np.mean(retenciones)),
+        "item_mas_urgente":      items[idx_urgente].pregunta,
+        "items_en_zona_critica": items_criticos,
+        "items":                 items
+    }

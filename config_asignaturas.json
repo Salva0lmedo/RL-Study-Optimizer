@@ -1,21 +1,21 @@
 {
   "n_topics": 7,
   "nombres": [
-    "Mate",
-    "Lengua",
-    "Ingles",
-    "Historia",
-    "Religion",
-    "Musica",
-    "Frances"
+    "asig 1",
+    "asig 2",
+    "asig 3",
+    "asig 4",
+    "asig 5",
+    "asig 6",
+    "asig 7"
   ],
   "dificultades": [
+    0.1,
+    0.3,
+    0.5,
+    0.7,
     0.9,
-    0.5,
-    0.5,
-    0.5,
-    0.5,
-    0.5,
+    0.7,
     0.5
   ]
 }

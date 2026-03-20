@@ -247,3 +247,177 @@ def avanzar_dia(usuario_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     crud.avanzar_dias(db, usuario_id)
     return {"estado": "ok", "mensaje": "Día avanzado correctamente"}
+
+
+# ════════════════════════════════════════════════════════════════
+# ENDPOINTS — SISTEMA UNIVERSAL DE DOMINIOS E ÍTEMS
+# ════════════════════════════════════════════════════════════════
+
+# ── Tipos de dominio disponibles ──────────────────────────────────────────────
+@app.get("/api/dominios/tipos")
+def tipos_dominio():
+    """Devuelve el catálogo de tipos de dominio disponibles."""
+    from src.api.models import TIPOS_DOMINIO
+    return {"tipos": TIPOS_DOMINIO}
+
+
+# ── Dominios ──────────────────────────────────────────────────────────────────
+@app.post("/api/usuarios/{usuario_id}/dominios",
+          response_model=schemas.DominioRespuesta)
+def crear_dominio(usuario_id: int, datos: schemas.DominioCrear,
+                  db: Session = Depends(get_db)):
+    """Crea un nuevo dominio para el usuario."""
+    usuario = crud.obtener_usuario(db, usuario_id)
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    dominio = crud.crear_dominio(db, usuario_id, datos)
+    respuesta = schemas.DominioRespuesta(
+        id=dominio.id,
+        tipo=dominio.tipo,
+        nombre=dominio.nombre,
+        descripcion=dominio.descripcion,
+        total_items=0
+    )
+    return respuesta
+
+
+@app.get("/api/usuarios/{usuario_id}/dominios",
+         response_model=list[schemas.DominioRespuesta])
+def listar_dominios(usuario_id: int, db: Session = Depends(get_db)):
+    """Lista todos los dominios del usuario con sus estadísticas."""
+    dominios = crud.obtener_dominios(db, usuario_id)
+    resultado = []
+    for d in dominios:
+        items = crud.obtener_items(db, d.id)
+        resultado.append(schemas.DominioRespuesta(
+            id=d.id,
+            tipo=d.tipo,
+            nombre=d.nombre,
+            descripcion=d.descripcion,
+            total_items=len(items)
+        ))
+    return resultado
+
+
+@app.delete("/api/dominios/{dominio_id}")
+def eliminar_dominio(dominio_id: int, db: Session = Depends(get_db)):
+    """Elimina un dominio y todos sus ítems."""
+    crud.eliminar_dominio(db, dominio_id)
+    return {"estado": "ok", "mensaje": "Dominio eliminado"}
+
+
+# ── Items ─────────────────────────────────────────────────────────────────────
+@app.post("/api/dominios/{dominio_id}/items",
+          response_model=schemas.ItemRespuesta)
+def crear_item(dominio_id: int, datos: schemas.ItemCrear,
+               db: Session = Depends(get_db)):
+    """Añade un ítem a un dominio."""
+    item = crud.crear_item(db, dominio_id, datos)
+    return _item_a_respuesta(item)
+
+
+@app.post("/api/dominios/{dominio_id}/items/bulk")
+def crear_items_bulk(dominio_id: int, items: list[schemas.ItemCrear],
+                     db: Session = Depends(get_db)):
+    """
+    Crea múltiples ítems de golpe.
+    Útil para importar vocabulario, temarios, etc.
+    """
+    nuevos = crud.crear_items_bulk(db, dominio_id, items)
+    return {"creados": len(nuevos), "mensaje": f"{len(nuevos)} ítems añadidos"}
+
+
+@app.get("/api/dominios/{dominio_id}/items",
+         response_model=list[schemas.ItemRespuesta])
+def listar_items(dominio_id: int, db: Session = Depends(get_db)):
+    """Lista todos los ítems de un dominio."""
+    items = crud.obtener_items(db, dominio_id)
+    return [_item_a_respuesta(i) for i in items]
+
+
+# ── Recomendación de ítem ─────────────────────────────────────────────────────
+@app.get("/api/dominios/{dominio_id}/recomendar",
+         response_model=schemas.RecomendacionItemRespuesta)
+def recomendar_item(dominio_id: int, db: Session = Depends(get_db)):
+    """
+    Recomienda el ítem más urgente para practicar dentro del dominio.
+    Usa la misma lógica de urgencia × factor_tiempo que el agente PPO.
+    """
+    dominio = crud.obtener_dominio(db, dominio_id)
+    if not dominio:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+
+    item = crud.recomendar_item(db, dominio_id)
+    if not item:
+        raise HTTPException(status_code=400,
+                            detail="El dominio no tiene ítems. Añade ítems primero.")
+
+    retencion = float(np.exp(
+        -item.dias_desde_repaso / max(item.estabilidad, 0.1)
+    ))
+
+    return schemas.RecomendacionItemRespuesta(
+        item_id=item.id,
+        pregunta=item.pregunta,
+        respuesta=item.respuesta,
+        subdominio=item.subdominio,
+        dominio_nombre=dominio.nombre,
+        dominio_tipo=dominio.tipo,
+        retencion_estimada=retencion,
+        urgencia=1.0 - retencion,
+        dificultad=item.dificultad
+    )
+
+
+# ── Practicar ítem ────────────────────────────────────────────────────────────
+@app.post("/api/items/{item_id}/practicar")
+def practicar_item(item_id: int, datos: schemas.ItemPracticar,
+                   usuario_id: int, db: Session = Depends(get_db)):
+    """
+    Registra la práctica de un ítem y actualiza su estabilidad de Ebbinghaus.
+    El usuario indica su score del 0 al 10.
+    """
+    sesion = crud.practicar_item(db, item_id, usuario_id, datos.score)
+    if not sesion:
+        raise HTTPException(status_code=404, detail="Ítem no encontrado")
+    return {"estado": "ok", "sesion_id": sesion.id}
+
+
+# ── Estadísticas del dominio ──────────────────────────────────────────────────
+@app.get("/api/dominios/{dominio_id}/estadisticas",
+         response_model=schemas.EstadisticasDominioRespuesta)
+def estadisticas_dominio(dominio_id: int, db: Session = Depends(get_db)):
+    """Devuelve el resumen del estado del dominio."""
+    stats = crud.obtener_estadisticas_dominio(db, dominio_id)
+    if not stats:
+        raise HTTPException(status_code=400,
+                            detail="El dominio no tiene ítems todavía.")
+    stats["items"] = [_item_a_respuesta(i) for i in stats["items"]]
+    return stats
+
+
+# ── Avanzar día en dominio ────────────────────────────────────────────────────
+@app.post("/api/dominios/{dominio_id}/avanzar-dia")
+def avanzar_dia_dominio(dominio_id: int, db: Session = Depends(get_db)):
+    """Simula el paso de un día para todos los ítems del dominio."""
+    crud.avanzar_dias_dominio(db, dominio_id)
+    return {"estado": "ok", "mensaje": "Día avanzado en el dominio"}
+
+
+# ── Helper interno ────────────────────────────────────────────────────────────
+def _item_a_respuesta(item: models.Item) -> schemas.ItemRespuesta:
+    """Convierte un Item ORM a su schema de respuesta calculando la retención."""
+    retencion = float(np.exp(
+        -item.dias_desde_repaso / max(item.estabilidad, 0.1)
+    ))
+    return schemas.ItemRespuesta(
+        id=item.id,
+        pregunta=item.pregunta,
+        respuesta=item.respuesta,
+        subdominio=item.subdominio,
+        dificultad=item.dificultad,
+        estabilidad=item.estabilidad,
+        dias_desde_repaso=item.dias_desde_repaso,
+        veces_practicado=item.veces_practicado,
+        retencion_actual=retencion
+    )

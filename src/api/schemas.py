@@ -101,3 +101,84 @@ class EstadisticasRespuesta(BaseModel):
     total_sesiones:       int
     minutos_totales:      int
     asignaturas:          list[AsignaturaRespuesta]
+
+
+# ── Schemas de Dominio ────────────────────────────────────────────────────────
+
+class DominioCrear(BaseModel):
+    """Datos para crear un dominio nuevo."""
+    tipo:        str = Field(..., min_length=1, max_length=50)
+    nombre:      str = Field(..., min_length=1, max_length=100)
+    descripcion: Optional[str] = None
+
+
+class DominioRespuesta(BaseModel):
+    """Datos que devuelve la API al consultar un dominio."""
+    id:          int
+    tipo:        str
+    nombre:      str
+    descripcion: Optional[str]
+    total_items: int = 0   # Calculado dinámicamente
+
+    class Config:
+        from_attributes = True
+
+
+# ── Schemas de Item ───────────────────────────────────────────────────────────
+
+class ItemCrear(BaseModel):
+    """Datos para crear un ítem nuevo."""
+    pregunta:   str   = Field(..., min_length=1)
+    respuesta:  Optional[str] = None
+    subdominio: Optional[str] = None
+    dificultad: float = Field(0.5, ge=0.0, le=1.0)
+
+
+class ItemRespuesta(BaseModel):
+    """Datos que devuelve la API al consultar un ítem."""
+    id:               int
+    pregunta:         str
+    respuesta:        Optional[str]
+    subdominio:       Optional[str]
+    dificultad:       float
+    estabilidad:      float
+    dias_desde_repaso: float
+    veces_practicado: int
+    retencion_actual: float = 0.0   # Calculado dinámicamente
+
+    class Config:
+        from_attributes = True
+
+
+class ItemPracticar(BaseModel):
+    """Datos para registrar la práctica de un ítem."""
+    score: float = Field(..., ge=0.0, le=10.0)
+
+
+# ── Schema de Recomendación de Ítem ──────────────────────────────────────────
+
+class RecomendacionItemRespuesta(BaseModel):
+    """Lo que devuelve el agente al recomendar qué ítem practicar."""
+    item_id:           int
+    pregunta:          str
+    respuesta:         Optional[str]
+    subdominio:        Optional[str]
+    dominio_nombre:    str
+    dominio_tipo:      str
+    retencion_estimada: float
+    urgencia:          float
+    dificultad:        float
+
+
+# ── Schema de Estadísticas de Dominio ────────────────────────────────────────
+
+class EstadisticasDominioRespuesta(BaseModel):
+    """Resumen del estado de un dominio."""
+    dominio_id:           int
+    nombre:               str
+    tipo:                 str
+    total_items:          int
+    retencion_media:      float
+    item_mas_urgente:     Optional[str]
+    items_en_zona_critica: int   # ítems con retención < 40%
+    items:                list[ItemRespuesta]
