@@ -16,7 +16,7 @@ import sys
 import requests
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-API = "http://localhost:8000"
+API = "http://127.0.0.1:8000"
 
 NIVEL_A_DIFICULTAD = {1: 0.1, 2: 0.3, 3: 0.5, 4: 0.7, 5: 0.9}
 ETIQUETAS          = {1: "Muy fácil", 2: "Fácil", 3: "Normal",
